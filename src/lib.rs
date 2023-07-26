@@ -76,8 +76,6 @@ pub fn did_lookup(
     } else {
         controller
     }
-
-    
 }
 
 #[action(shortname = 0x03)]
@@ -85,7 +83,7 @@ pub fn register_did(
     context: ContractContext,
     mut state: ContractState,
     did: String
-) -> String{
+) -> ContractState{
 
     let parts = did.split(":").collect::<Vec<&str>>();
     assert!(parts.len() == 3, "DID Format Incorrect! Part len '{}' while expecting 3", parts.len());
@@ -101,24 +99,16 @@ pub fn register_did(
 */
 
     if state.dids.contains_key(&did) {
-        let controller = state.dids.get(&did).copied();
-            if controller == Some(context.sender) {
+        let controller: Address = state.dids.get(&did).copied().unwrap();
+            if controller == context.sender {
                 panic!("DID Already registered!")
             } else {
                 panic!("DID registered by another Controller!")
             }
     } else {
-
-        let mut full_identifier: [u8; 21] = [0; 21];
-        full_identifier[0] = context.sender.address_type as u8;
-        full_identifier[1..21].clone_from_slice(&context.sender.identifier);
-        
-        let mut did: String = "did:metablox:0x".to_owned();
-        did.push_str(&hex::encode(full_identifier));
-
         state.dids.insert(did, context.sender);
 
-        "DID registered!".to_string()
+        state
     }
 }
 
