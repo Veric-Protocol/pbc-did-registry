@@ -11,6 +11,7 @@ use pbc_contract_common::sorted_vec_map::SortedVecMap;
 pub struct ContractState {
     owner: Address,
     owner_did: String,
+    nonce: SortedVecMap<Address, u128>, // Key: Address, Value: Nonce
     dids: SortedVecMap<String, Address>, // Key: DID, Value: Controller Address
     attributes: SortedVecMap<String, Vec<String>>, // Key: DID, Value: Attributes list
 }
@@ -27,15 +28,20 @@ fn initialize(
     let mut did: String = "did:metablox:0x".to_owned();
     did.push_str(&hex::encode(full_identifier));
 
+    let mut nonce_storage: SortedVecMap<Address, u128> = SortedVecMap::new();
     let mut did_storage: SortedVecMap<String, Address> = SortedVecMap::new();
     let mut attribute_storage: SortedVecMap<String, Vec<String>> = SortedVecMap::new();
+    
+    nonce_storage.insert(ctx.sender, 0x01);
     did_storage.insert(did.clone(), ctx.sender);
     let mut new_attribute : Vec<String> = Vec::new();
     new_attribute.push("Issuer".to_string());
     attribute_storage.insert(did.clone(), new_attribute);
 
+
     let state = ContractState {
         owner: ctx.sender,
+        nonce: nonce_storage,
         dids: did_storage,
         owner_did:  did,
         attributes: attribute_storage,
@@ -89,14 +95,13 @@ pub fn register_did(
     assert!(parts.len() == 3, "DID Format Incorrect! Part len '{}' while expecting 3", parts.len());
     assert!(parts[0].to_string() == "did".to_string(), "DID Format Incorrect! Scheme needs to be 'did'");
     assert!(parts[1].to_string() == "metablox".to_string(), "DID Format Incorrect! Method needs to be 'metablox'");
-/* 
+
     if !state.nonce.contains_key(&context.sender) {
         state.nonce.insert(context.sender, 0x01);
     } else {
-        let mut value = state.nonce.get_mut(&context.sender).unwrap();
-        *value += 1;
+        *state.nonce.get_mut(&context.sender).unwrap() += 1;
     }
-*/
+
 
     if state.dids.contains_key(&did) {
         let controller: Address = state.dids.get(&did).copied().unwrap();
@@ -134,6 +139,12 @@ pub fn set_attribute(
 
     } else {
         panic!("DID Not Exist!")
+    }
+
+    if !state.nonce.contains_key(&context.sender) {
+        state.nonce.insert(context.sender, 0x01);
+    } else {
+        *state.nonce.get_mut(&context.sender).unwrap() += 1;
     }
 
     state
