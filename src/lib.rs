@@ -3,7 +3,7 @@
 #[macro_use]
 extern crate pbc_contract_codegen;
 
-use pbc_contract_common::address::{Address, AddressType};
+use pbc_contract_common::address::Address;
 use pbc_contract_common::context::ContractContext;
 use pbc_contract_common::sorted_vec_map::SortedVecMap;
 
@@ -14,6 +14,7 @@ pub struct ContractState {
     nonce: SortedVecMap<Address, u128>, // Key: Address, Value: Nonce
     dids: SortedVecMap<String, Address>, // Key: DID, Value: Controller Address
     attributes: SortedVecMap<String, Vec<String>>, // Key: DID, Value: Attributes list
+    delegates: SortedVecMap<String, SortedVecMap<Address, i64>>, // Key: DID, Value: Delegates list <Key: Delegate Address, Value: Expire At>
 }
 
 #[init]
@@ -31,6 +32,8 @@ fn initialize(
     let mut nonce_storage: SortedVecMap<Address, u128> = SortedVecMap::new();
     let mut did_storage: SortedVecMap<String, Address> = SortedVecMap::new();
     let mut attribute_storage: SortedVecMap<String, Vec<String>> = SortedVecMap::new();
+    let delegate_storage: SortedVecMap<String, SortedVecMap<Address, i64>> = SortedVecMap::new();
+
     
     nonce_storage.insert(ctx.sender, 0x01);
     did_storage.insert(did.clone(), ctx.sender);
@@ -45,46 +48,13 @@ fn initialize(
         dids: did_storage,
         owner_did:  did,
         attributes: attribute_storage,
+        delegates: delegate_storage,
     };
 
     state
 }
 
-/*
 #[action(shortname = 0x01)]
-pub fn nonce(    
-    context: ContractContext,
-    state: ContractState,
-) -> u128{
-
-    if state.nonce.contains_key(&context.sender) {
-        state.nonce.get(&context.sender).copied().unwrap()
-    } else {
-        0x00 as u128
-    }
-}
-*/
-
-#[action(shortname = 0x02)]
-pub fn did_lookup(    
-    _context: ContractContext,
-    state: ContractState,
-    did: String
-) -> Address{
-    let empty_identifier : [u8; 20] = [0; 20];
-    let controller = Address {
-        address_type: AddressType::Account,
-        identifier : empty_identifier,
-    };
-
-    if state.dids.contains_key(&did) {
-        state.dids.get(&did).unwrap().clone()
-    } else {
-        controller
-    }
-}
-
-#[action(shortname = 0x03)]
 pub fn register_did(    
     context: ContractContext,
     mut state: ContractState,
@@ -117,7 +87,7 @@ pub fn register_did(
     }
 }
 
-#[action(shortname = 0x04)]
+#[action(shortname = 0x02)]
 pub fn set_attribute(
     context: ContractContext,
     mut state: ContractState,
@@ -126,10 +96,26 @@ pub fn set_attribute(
 ) -> ContractState{
 
     if state.dids.contains_key(&did) {
-        let controller = state.dids.get(&did).unwrap().clone();
 
-        if controller != context.sender {
-            panic!("Not Authorized!")
+        let controller = state.dids.get(&did).unwrap().clone();
+        // Do nothing if Sender is the Controller
+        if controller == context.sender {
+            // Empty block
+        // Sender not the Controller, check if the DID has Delegates
+        } else if state.delegates.contains_key(&did) {
+            let delegates_map = state.delegates.get(&did).unwrap();
+            // Check if the Sender is one of the Delegates
+            if delegates_map.contains_key(&context.sender) {
+                // Check if the Delelgate has expired
+                if delegates_map.get(&context.sender).unwrap().clone() < context.block_time {
+                    panic!("Delegate Expired!")
+                }
+            } else {
+                panic!("Not Authorized!");
+            }
+        // DID has no Delegates
+        } else {
+            panic!("Not Authorized!");
         }
 
         if state.attributes.contains_key(&did) {
@@ -150,27 +136,73 @@ pub fn set_attribute(
     state
 }
 
-#[action(shortname = 0x05)]
-pub fn get_attribute(
-    _context: ContractContext,
-    state: ContractState,
+#[action(shortname = 0x03)]
+pub fn change_owner(
+    context: ContractContext,
+    mut state: ContractState,
+    new_owner: Address,
     did: String,
-) -> Vec<String>{
-
-    let mut attribute_vec : Vec<String> = Vec::new();
-
+) -> ContractState{
     if state.dids.contains_key(&did) {
-    
-        if state.attributes.contains_key(&did) {
-            attribute_vec = state.attributes.get(&did).unwrap().clone();
-        } else {
-            attribute_vec.push("".to_string());
+        let controller = state.dids.get(&did).unwrap().clone();
+        // Should we allow Delegate to change the DID owner?
+        if controller != context.sender {
+            panic!("Not Authorized!")
         }
-        
-        
+
+        *state.dids.get_mut(&did).unwrap() = new_owner;
+
     } else {
         panic!("DID Not Exist!")
     }
 
-    attribute_vec
+    if !state.nonce.contains_key(&context.sender) {
+        state.nonce.insert(context.sender, 0x01);
+    } else {
+        *state.nonce.get_mut(&context.sender).unwrap() += 1;
+    }
+
+    state
+}
+
+#[action(shortname = 0x04)]
+pub fn add_delegate(
+    context: ContractContext,
+    mut state: ContractState,
+    delegate_address: Address,
+    did: String,
+    expire_in: i64,
+) -> ContractState{
+    if state.dids.contains_key(&did) {
+        let controller = state.dids.get(&did).unwrap().clone();
+
+        if controller != context.sender {
+            panic!("Not Authorized!")
+        }
+
+        if state.delegates.contains_key(&did) {
+            let delegates_map = state.delegates.get_mut(&did).unwrap();
+            if delegates_map.contains_key(&delegate_address) {
+                *delegates_map.get_mut(&delegate_address).unwrap()=context.block_time + expire_in;
+            } else {
+                delegates_map.insert(delegate_address, context.block_time + expire_in);
+            }
+
+        } else {
+            let mut new_delegates_map : SortedVecMap<Address, i64> = SortedVecMap::new();
+            new_delegates_map.insert(delegate_address, context.block_time + expire_in);
+            state.delegates.insert(did, new_delegates_map);
+        }
+
+    } else {
+        panic!("DID Not Exist!")
+    }
+
+    if !state.nonce.contains_key(&context.sender) {
+        state.nonce.insert(context.sender, 0x01);
+    } else {
+        *state.nonce.get_mut(&context.sender).unwrap() += 1;
+    }
+
+    state
 }
