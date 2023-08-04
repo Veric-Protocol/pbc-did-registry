@@ -5,6 +5,7 @@ extern crate pbc_contract_codegen;
 
 use pbc_contract_common::address::Address;
 use pbc_contract_common::context::ContractContext;
+use pbc_contract_common::events::EventGroup;
 use pbc_contract_common::sorted_vec_map::SortedVecMap;
 
 #[state]
@@ -26,7 +27,7 @@ fn initialize(
     full_identifier[0] = ctx.sender.address_type as u8;
     full_identifier[1..21].clone_from_slice(&ctx.sender.identifier);
     
-    let mut did: String = "did:metablox:0x".to_owned();
+    let mut did: String = "did:veric:0x".to_owned();
     did.push_str(&hex::encode(full_identifier));
 
     let mut nonce_storage: SortedVecMap<Address, u128> = SortedVecMap::new();
@@ -64,7 +65,7 @@ pub fn register_did(
     let parts = did.split(":").collect::<Vec<&str>>();
     assert!(parts.len() == 3, "DID Format Incorrect! Part len '{}' while expecting 3", parts.len());
     assert!(parts[0].to_string() == "did".to_string(), "DID Format Incorrect! Scheme needs to be 'did'");
-    assert!(parts[1].to_string() == "metablox".to_string(), "DID Format Incorrect! Method needs to be 'metablox'");
+    assert!(parts[1].to_string() == "veric".to_string(), "DID Format Incorrect! Method needs to be 'veric'");
 
     if !state.nonce.contains_key(&context.sender) {
         state.nonce.insert(context.sender, 0x01);
@@ -205,4 +206,36 @@ pub fn add_delegate(
     }
 
     state
+}
+
+#[action(shortname = 0x05)]
+pub fn check_authorized(
+    context: ContractContext,
+    state: ContractState,
+    did: String,
+    request_from: Address,
+) -> (ContractState, Vec<EventGroup>) {
+
+    let controller = state.dids.get(&did).unwrap().clone();
+    // Do nothing if Sender is the Controller
+    if controller == request_from {
+        // Empty block
+    // Sender not the Controller, check if the DID has Delegates
+    } else if state.delegates.contains_key(&did) {
+        let delegates_map = state.delegates.get(&did).unwrap();
+        // Check if the Sender is one of the Delegates
+        if delegates_map.contains_key(&request_from) {
+            // Check if the Delelgate has expired
+            if delegates_map.get(&request_from).unwrap().clone() < context.block_time {
+                panic!("Delegate Expired!")
+            }
+        } else {
+            panic!("Not Authorized!");
+        }
+    // DID has no Delegates
+    } else {
+        panic!("Not Authorized!");
+    }
+
+    (state, vec![])
 }
