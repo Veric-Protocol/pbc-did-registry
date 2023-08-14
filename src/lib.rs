@@ -73,19 +73,10 @@ pub fn register_did(
         *state.nonce.get_mut(&context.sender).unwrap() += 1;
     }
 
+    assert!(!state.dids.contains_key(&did), "DID Already Registered!");
+    state.dids.insert(did, context.sender);
 
-    if state.dids.contains_key(&did) {
-        let controller: Address = state.dids.get(&did).copied().unwrap();
-            if controller == context.sender {
-                panic!("DID Already registered!")
-            } else {
-                panic!("DID registered by another Controller!")
-            }
-    } else {
-        state.dids.insert(did, context.sender);
-
-        state
-    }
+    state
 }
 
 #[action(shortname = 0x02)]
@@ -108,7 +99,7 @@ pub fn set_attribute(
             // Check if the Sender is one of the Delegates
             if delegates_map.contains_key(&context.sender) {
                 // Check if the Delelgate has expired
-                if delegates_map.get(&context.sender).unwrap().clone() < context.block_time {
+                if delegates_map.get(&context.sender).unwrap().clone() < context.block_production_time {
                     panic!("Delegate Expired!")
                 }
             } else {
@@ -144,18 +135,12 @@ pub fn change_owner(
     new_owner: Address,
     did: String,
 ) -> ContractState{
-    if state.dids.contains_key(&did) {
-        let controller = state.dids.get(&did).unwrap().clone();
-        // Should we allow Delegate to change the DID owner?
-        if controller != context.sender {
-            panic!("Not Authorized!")
-        }
+    assert!(state.dids.contains_key(&did), "DID Not Exist!");
 
-        *state.dids.get_mut(&did).unwrap() = new_owner;
+    let controller = state.dids.get(&did).unwrap().clone();
+    assert!(controller == context.sender, "Not Authorized!");
 
-    } else {
-        panic!("DID Not Exist!")
-    }
+    *state.dids.get_mut(&did).unwrap() = new_owner;
 
     if !state.nonce.contains_key(&context.sender) {
         state.nonce.insert(context.sender, 0x01);
@@ -174,29 +159,23 @@ pub fn add_delegate(
     did: String,
     expire_in: i64,
 ) -> ContractState{
-    if state.dids.contains_key(&did) {
-        let controller = state.dids.get(&did).unwrap().clone();
+    assert!(state.dids.contains_key(&did), "DID Not Exist!");
 
-        if controller != context.sender {
-            panic!("Not Authorized!")
-        }
+    let controller = state.dids.get(&did).unwrap().clone();
+    assert!(controller == context.sender, "Not Authorized!");
 
-        if state.delegates.contains_key(&did) {
-            let delegates_map = state.delegates.get_mut(&did).unwrap();
-            if delegates_map.contains_key(&delegate_address) {
-                *delegates_map.get_mut(&delegate_address).unwrap()=context.block_time + expire_in;
-            } else {
-                delegates_map.insert(delegate_address, context.block_time + expire_in);
-            }
-
+    if state.delegates.contains_key(&did) {
+        let delegates_map = state.delegates.get_mut(&did).unwrap();
+        if delegates_map.contains_key(&delegate_address) {
+            *delegates_map.get_mut(&delegate_address).unwrap()=context.block_production_time + expire_in;
         } else {
-            let mut new_delegates_map : SortedVecMap<Address, i64> = SortedVecMap::new();
-            new_delegates_map.insert(delegate_address, context.block_time + expire_in);
-            state.delegates.insert(did, new_delegates_map);
+            delegates_map.insert(delegate_address, context.block_production_time + expire_in);
         }
 
     } else {
-        panic!("DID Not Exist!")
+        let mut new_delegates_map : SortedVecMap<Address, i64> = SortedVecMap::new();
+        new_delegates_map.insert(delegate_address, context.block_production_time + expire_in);
+        state.delegates.insert(did, new_delegates_map);
     }
 
     if !state.nonce.contains_key(&context.sender) {
@@ -216,6 +195,8 @@ pub fn check_authorized(
     request_from: Address,
 ) -> (ContractState, Vec<EventGroup>) {
 
+    assert!(state.dids.contains_key(&did), "DID Not Exist!");
+
     let controller = state.dids.get(&did).unwrap().clone();
     // Do nothing if Sender is the Controller
     if controller == request_from {
@@ -226,7 +207,7 @@ pub fn check_authorized(
         // Check if the Sender is one of the Delegates
         if delegates_map.contains_key(&request_from) {
             // Check if the Delelgate has expired
-            if delegates_map.get(&request_from).unwrap().clone() < context.block_time {
+            if delegates_map.get(&request_from).unwrap().clone() < context.block_production_time {
                 panic!("Delegate Expired!")
             }
         } else {
